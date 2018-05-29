@@ -17,8 +17,27 @@ class LanguageModel(object):
     General language model class
     """
 
-    def __init__(self, model_file):
+    def __init__(self, model_path):
         pass
+
+    def load(self, path):
+        """
+
+        :param path:
+        :return:
+        """
+
+    def train(self):
+        """
+
+        :return:
+        """
+
+    def evaluate(self):
+        """
+
+        :return:
+        """
 
     def predict_next_word(self, prefix):
         """

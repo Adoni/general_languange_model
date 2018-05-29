@@ -50,5 +50,30 @@ def tokenize(path, dictionary):
             for word in words:
                 ids[token] = dictionary.word2idx[word]
                 token += 1
-
     return ids
+
+
+def batchify(data, bsz, device):
+    """
+    Starting from sequential data, batchify arranges the dataset into columns.
+    For instance, with the alphabet as the sequence and batch size 4, we'd get
+    ┌ a g m s ┐
+    │ b h n t │
+    │ c i o u │
+    │ d j p v │
+    │ e k q w │
+    └ f l r x ┘.
+    These columns are treated as independent by the model, which means that the
+    dependence of e. g. 'g' on 'f' can not be learned, but allows more efficient
+    batch processing.
+    :param data:
+    :param bsz:
+    :return:
+    """
+    # Work out how cleanly we can divide the dataset into bsz parts.
+    nbatch = data.size(0) // bsz
+    # Trim off any extra elements that wouldn't cleanly fit (remainders).
+    data = data.narrow(0, 0, nbatch * bsz)
+    # Evenly divide the data across the bsz batches.
+    data = data.view(bsz, -1).t().contiguous()
+    return data.to(device)

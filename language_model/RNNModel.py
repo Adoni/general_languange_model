@@ -13,6 +13,7 @@
 
 import torch.nn as nn
 
+
 class RNNModel(nn.Module):
     """Container module with an encoder, a recurrent module, and a decoder."""
 
