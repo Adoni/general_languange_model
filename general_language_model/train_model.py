@@ -2,9 +2,9 @@
 """
     train_model.py.py
     ~~~~~~~~~
-    
+
     Train language model and save it to disk
-    
+
     :author: Xiaofei Sun
     :contact: adoni1203@gmail.com
     :date: 2018/5/29
@@ -13,13 +13,15 @@
 
 import torch
 import argparse
-from language_model.utils import Dictionary, tokenize, batchify
+from general_language_model.utils import Dictionary, batchify
 import os
-from language_model import RNNModel as model
+from general_language_model import RNNModel
+from general_language_model.language_model import LanguageModel
 import torch.nn as nn
 import torch.onnx
 import time
 import math
+from general_language_model.utils import get_batch, repackage_hidden
 
 
 parser = argparse.ArgumentParser(description='PyTorch Wikitext-2 RNN/LSTM Language Model')
@@ -53,7 +55,7 @@ parser.add_argument('--cuda', action='store_true',
                     help='use CUDA')
 parser.add_argument('--log-interval', type=int, default=200, metavar='N',
                     help='report interval')
-parser.add_argument('--save', type=str, default='model.pt',
+parser.add_argument('--model-path', type=str, default='./model',
                     help='path to save the final model')
 parser.add_argument('--onnx-export', type=str, default='',
                     help='path to export the final model in onnx format')
@@ -67,15 +69,16 @@ if torch.cuda.is_available():
 
 device = torch.device("cuda" if args.cuda else "cpu")
 
+
 dictionary = Dictionary()
-train = tokenize(os.path.join(args.data, 'train.txt'))
+train = dictionary.tokenize_path(os.path.join(args.data, 'train.txt'))
 if os.path.exists(os.path.join(args.data, 'valid.txt')):
-    valid = tokenize(os.path.join(args.data, 'valid.txt'))
+    valid = dictionary.tokenize_path(os.path.join(args.data, 'valid.txt'))
     exist_valid = True
 else:
     exist_valid = False
 if os.path.exists(os.path.join(args.data, 'test.txt')):
-    test = tokenize(os.path.join(args.data, 'test.txt'))
+    test = dictionary.tokenize_path(os.path.join(args.data, 'test.txt'))
     exist_test = True
 else:
     exist_test = False
@@ -88,7 +91,13 @@ test_data = batchify(test, eval_batch_size, device)
 
 
 ntokens = len(dictionary)
-model = model.RNNModel(args.model, ntokens, args.emsize, args.nhid, args.nlayers, args.dropout, args.tied).to(device)
+
+lm = LanguageModel(
+    model=RNNModel.RNNModel(
+        args.model, ntokens, args.emsize, args.nhid, args.nlayers, args.dropout, args.tied).to(device),
+    dictionary=dictionary,
+    model_path=args.model_path)
+lm.save()
 
 criterion = nn.CrossEntropyLoss()
 
@@ -96,13 +105,6 @@ criterion = nn.CrossEntropyLoss()
 ###############################################################################
 # Training code
 ###############################################################################
-
-def repackage_hidden(h):
-    """Wraps hidden states in new Tensors, to detach them from their history."""
-    if isinstance(h, torch.Tensor):
-        return h.detach()
-    else:
-        return tuple(repackage_hidden(v) for v in h)
 
 
 # get_batch subdivides the source data into chunks of length args.bptt.
@@ -115,49 +117,27 @@ def repackage_hidden(h):
 # by the batchify function. The chunks are along dimension 0, corresponding
 # to the seq_len dimension in the LSTM.
 
-def get_batch(source, i):
-    seq_len = min(args.bptt, len(source) - 1 - i)
-    data = source[i:i+seq_len]
-    target = source[i+1:i+1+seq_len].view(-1)
-    return data, target
-
-
-def evaluate(data_source):
-    # Turn on evaluation mode which disables dropout.
-    model.eval()
-    total_loss = 0.
-    ntokens = len(dictionary)
-    hidden = model.init_hidden(eval_batch_size)
-    with torch.no_grad():
-        for i in range(0, data_source.size(0) - 1, args.bptt):
-            data, targets = get_batch(data_source, i)
-            output, hidden = model(data, hidden)
-            output_flat = output.view(-1, ntokens)
-            total_loss += len(data) * criterion(output_flat, targets).item()
-            hidden = repackage_hidden(hidden)
-    return total_loss / len(data_source)
-
 
 def train():
     # Turn on training mode which enables dropout.
-    model.train()
+    lm.model.train()
     total_loss = 0.
     start_time = time.time()
     ntokens = len(dictionary)
-    hidden = model.init_hidden(args.batch_size)
+    hidden = lm.model.init_hidden(args.batch_size)
     for batch, i in enumerate(range(0, train_data.size(0) - 1, args.bptt)):
-        data, targets = get_batch(train_data, i)
+        data, targets = get_batch(train_data, i, args.bptt)
         # Starting each batch, we detach the hidden state from how it was previously produced.
         # If we didn't, the model would try backpropagating all the way to start of the dataset.
         hidden = repackage_hidden(hidden)
-        model.zero_grad()
-        output, hidden = model(data, hidden)
+        lm.model.zero_grad()
+        output, hidden = lm.model(data, hidden)
         loss = criterion(output.view(-1, ntokens), targets)
         loss.backward()
 
         # `clip_grad_norm` helps prevent the exploding gradient problem in RNNs / LSTMs.
-        torch.nn.utils.clip_grad_norm(model.parameters(), args.clip)
-        for p in model.parameters():
+        torch.nn.utils.clip_grad_norm(lm.model.parameters(), args.clip)
+        for p in lm.model.parameters():
             p.data.add_(-lr, p.grad.data)
 
         total_loss += loss.item()
@@ -173,15 +153,6 @@ def train():
             start_time = time.time()
 
 
-def export_onnx(path, batch_size, seq_len):
-    print('The model is also exported in ONNX format at {}'.
-          format(os.path.realpath(args.onnx_export)))
-    model.eval()
-    dummy_input = torch.LongTensor(seq_len * batch_size).zero_().view(-1, batch_size).to(device)
-    hidden = model.init_hidden(batch_size)
-    torch.onnx.export(model, (dummy_input, hidden), path)
-
-
 # Loop over epochs.
 lr = args.lr
 best_val_loss = None
@@ -190,8 +161,9 @@ best_val_loss = None
 try:
     for epoch in range(1, args.epochs+1):
         epoch_start_time = time.time()
+
+        val_loss = lm.evaluate(val_data, eval_batch_size, args.bptt, criterion)
         train()
-        val_loss = evaluate(val_data)
         print('-' * 89)
         print('| end of epoch {:3d} | time: {:5.2f}s | valid loss {:5.2f} | '
                 'valid ppl {:8.2f}'.format(epoch, (time.time() - epoch_start_time),
@@ -199,8 +171,7 @@ try:
         print('-' * 89)
         # Save the model if the validation loss is the best we've seen so far.
         if not best_val_loss or val_loss < best_val_loss:
-            with open(args.save, 'wb') as f:
-                torch.save(model, f)
+            lm.save()
             best_val_loss = val_loss
         else:
             # Anneal the learning rate if no improvement has been seen in the validation dataset.
@@ -209,20 +180,11 @@ except KeyboardInterrupt:
     print('-' * 89)
     print('Exiting from training early')
 
-# Load the best saved model.
-with open(args.save, 'rb') as f:
-    model = torch.load(f)
-    # after load the rnn params are not a continuous chunk of memory
-    # this makes them a continuous chunk, and will speed up forward pass
-    model.rnn.flatten_parameters()
+lm.load()
 
 # Run on test data.
-test_loss = evaluate(test_data)
+test_loss = lm.evaluate(test_data, eval_batch_size, args.bptt, criterion)
 print('=' * 89)
 print('| End of training | test loss {:5.2f} | test ppl {:8.2f}'.format(
     test_loss, math.exp(test_loss)))
 print('=' * 89)
-
-if len(args.onnx_export) > 0:
-    # Export the model in ONNX format.
-    export_onnx(args.onnx_export, batch_size=1, seq_len=args.bptt)
