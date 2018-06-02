@@ -19,14 +19,18 @@ lm = LanguageModel(None, None, './model')
 while 1:
     sentence = input('Sentence: ')
     sentence = sentence.split() + ['<eos>']
-    score = lm.scoring(sentence)
-    scores = [score]
-    for i in range(10):
-        numpy.random.shuffle(sentence)
-        score = lm.scoring(sentence)
-        scores.append(score)
-    print('Original Sentence')
-    print(scores[0])
-    print('Shuffled Sentences')
-    print(scores[1:])
+    # score = lm.scoring(sentence)
+    # scores = [score]
+    # for i in range(10):
+    #     numpy.random.shuffle(sentence)
+    #     score = lm.scoring(sentence)
+    #     scores.append(score)
+    # print('Original Sentence')
+    # print(scores[0])
+    # print('Shuffled Sentences')
+    # print(scores[1:])
+    words, score = lm.predict_next_word(sentence)
+    argsort = numpy.argsort(-1*score)
+    for idx in argsort[:10]:
+        print(" ".join(sentence[:-1]) + " " + words[idx])
 

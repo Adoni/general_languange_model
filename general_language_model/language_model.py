@@ -80,7 +80,17 @@ class LanguageModel(object):
         :param prefix:
         :return: a word which is most possible to be the next word of this prefix
         """
-        pass
+        prefix = self.dictionary.tokenize_sentence(prefix)
+        prefix = prefix[:-1]
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        eval_batch_size, seq_len = 1, prefix.size(0)
+        prefix = batchify(prefix, eval_batch_size, device)
+        ntokens = len(self.dictionary)
+        hidden = self.model.init_hidden(eval_batch_size)
+        output, hidden = self.model(prefix, hidden)
+        output_flat = output.view(-1, ntokens)
+        last_one = output_flat[-1, :]
+        return self.dictionary.idx2word, last_one.cpu().detach().numpy()
 
     def predict_sentence(self, prefix):
         pass
